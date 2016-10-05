@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Created on Fri Sep 30 18:28:04 2016
 
@@ -57,22 +57,7 @@ def explicit():
     
 def implicit(s_tr):
     # I WILL HERE IMPLEMENT THE BACKWARD EULER ALGORITHM:
-    #  x_n+1  =  x_n + dt * f(x_n+1)    instead of FE: x_n+1  =  x_n + dt * f(x_n)
-    # The expression must be solved analytically for the unknown dlamba, then newton raphson 
-    # to solve the nonlinear equation!!!
-    #IF LINEAR:
-    h_R_lin = 40
-    dlamba  =  (abs(s_tr) - (s_0 + R[-1])) / (E + h_R_lin)
-    #return dlamba
-    # IF NON_LINEAR, write this on residual form:
-    #INITIAL CONDITION IS ALWAYS:
-    dlamba = 0
-    def residual(dlamba):
-        return dlamba * (E + h_R(p[-1] + dlamba)) - (abs(s_tr) - (s_0 + R[-1]))
-    def residual_der(dlamba):
-        if p[-1] + dlamba == 0:
-            return E 
-        else:
+
             return E + n*K*(p[-1] + dlamba)**(n-1) + n*K*dlamba*(p[-1] + dlamba)**(n-2) * (n-1) 
     TOL = 0.0001
     while abs(residual(dlamba)) > TOL:
