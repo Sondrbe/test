@@ -1,0 +1,455 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Sep 30 18:28:04 2016
+
+@author: Bergo
+"""
+
+#1D PLASTICITY 
+
+#MATERIAL PARAMETERS
+e_part1 = list(np.linspace(0,0.01,150))
+e_part2 = list(np.linspace(0.01,-0.014,200))
+e_part3 = list(np.linspace(-0.014,-0.01,80))
+e = e_part1 + e_part2 + e_part3
+E = 210000.
+s_0 = 200. 
+#POWER:
+K =700.
+n = 0.8
+#VOCE:
+Q_R = 100.
+C_R = 50.
+#VISCOPLASTICITY:
+C = 0.01 
+sigma_v0 = 100.
+dot_p0 = 10.**(-3)
+
+#DEFINING HELPER FUNCTIONS
+def R_func(p):
+    # if p == 0: return 0.
+    # else: return K*p**n   # POWER LAW RESULTS IN NUMERICAL PROBLEMS!!
+    return Q_R * (1 - np.exp(-C_R * p)) #VOCE
+def h_R(p):
+    # if p==0: return 0
+    # else: return n*K*p**(n-1) If power law...
+    return Q_R * C_R * np.exp(-C_R * p) #VOCE
+def s_trial(de):
+	return E*de + sigma[-1] 
+def f(s,p):
+	return abs(s) - (s_0 + R_func(p))
+def sign(a):
+    return (a / abs(a))
+def dfdlamba(s,p):
+    return sign(s[-1] + E*de - E*dlamba*sign(s[-1])) * (-E*sign(s[-1])) - h_R(p[-1]) 
+	
+sigma = [0.]
+R = [0.]
+e_p = [0.]
+p = [0.]
+
+#SOLVER:
+def explicit():
+    #EXPLICIT SOLVER DEVELOPED FROM THE RATE CONSTITUTIVE EQUATION:
+    dlamba = (E * de * (sigma[-1]/abs(sigma[-1]))) / (h_R(p[-1]) + E)
+    return dlamba
+    
+    
+def implicit(s_tr):
+    # I WILL HERE IMPLEMENT THE BACKWARD EULER ALGORITHM:
+    #  x_n+1  =  x_n + dt * f(x_n+1)    instead of FE: x_n+1  =  x_n + dt * f(x_n)
+    # The expression must be solved analytically for the unknown dlamba, then newton raphson 
+    # to solve the nonlinear equation!!!
+    #IF LINEAR:
+    h_R_lin = 40
+    dlamba  =  (abs(s_tr) - (s_0 + R[-1])) / (E + h_R_lin)
+    #return dlamba
+    # IF NON_LINEAR, write this on residual form:
+    #INITIAL CONDITION IS ALWAYS:
+    dlamba = 0
+    def residual(dlamba):
+        return dlamba * (E + h_R(p[-1] + dlamba)) - (abs(s_tr) - (s_0 + R[-1]))
+    def residual_der(dlamba):
+        if p[-1] + dlamba == 0:
+            return E 
+        else:
+            return E + n*K*(p[-1] + dlamba)**(n-1) + n*K*dlamba*(p[-1] + dlamba)**(n-2) * (n-1) 
+    TOL = 0.0001
+    while abs(residual(dlamba)) > TOL:
+        dlamba = dlamba - residual(dlamba) / residual_der(dlamba)
+    return dlamba
+    
+def visco_implicit(p,dt):
+    C = 0.1 
+    sigma_v0 = 100.
+    dot_p0 = 10.**(-6)
+    #def phi(s,R):       #only posible to use if explicit method...
+    #    return ((f(s,R)/sigma_v0)**(1/c))*dot_p0
+
+    def residual(dlamba, sigma, R):
+        # res = dlamba - \phi(s_n+1, R_n+1) * dt...
+        #res = dlamba - dt*((sigma / (s_0 + R))**(1./C) - 1.) * dot_p0   #MULTIPLICATIVE VISCOPLASTICITY
+        res = dlamba - dt*(((abs(sigma) - (s_0 + R))/sigma_v0)**(1./C)) * dot_p0  #ADDITIV VISCOPLASTICITY...
+        return res
+    #secant method:
+    dlamba0 = 0.
+    sigma_0 = s_tr
+    R_0 = R[-1]
+    dlamba1 = 0.0001
+    sigma_1 = s_tr - E*dlamba1 * sign(s_tr)        # SOME UPDATES REMAINS!!
+    R_1 = R[-1] + h_R(p[-1] + dlamba1) * dlamba1
+    while (dlamba1 - dlamba0) > 0.0000001:
+        dlamba2 = dlamba1 - residual(dlamba1, sigma_1, R_1) * (dlamba1 - dlamba0) / (residual(dlamba1, sigma_1, R_1) - residual(dlamba0, sigma_0, R_0))
+        dlamba0 = dlamba1
+        dlamba1 = dlamba2
+        sigma_0 = sigma_1
+        R_0 = R_1
+        sigma_1 = s_tr - E*dlamba1 * sign(s_tr)        # SOME UPDATES REMAINS!!
+        R_1 = R[-1] + h_R(p[-1] + dlamba1) * dlamba1
+    return dlamba1
+    
+    
+# THE NUMERICAL PROCESS:
+for i in range(len(e)-1):
+    de = e[i+1] - e[i]
+    s_tr = s_trial(de)
+    if f(s_tr, p[-1]) <= 0:
+        #UPDATE SCHEME IF ELASTICTY:
+        sigma.append(s_tr)
+        R.append(R[-1])
+        p.append(p[-1])
+        e_p.append(e_p[-1])
+    else:
+        #dlamba = explicit()
+        #dlamba = implicit(s_tr)
+        dlamba = visco_implicit(p,0.001)    # arguments: p, dt
+        #UPDATE SCHEME IF PLASTICITY
+        sigma.append(s_tr - E*dlamba * (sigma[-1] / (abs(sigma[-1]))))
+        R.append(R[-1] + h_R(p[-1])*dlamba)
+        p.append(p[-1] + dlamba)
+        e_p.append(e_p[-1] + dlamba*(sigma[-1] / abs(sigma[-1]))) 
+#plt.plot(sigma)
+
+
+
+# 3D PLASTICITY WITH J2 flow theory:
+sigma  =  [np.array([0., 0., 0., 0., 0., 0.])]
+epsilon  =  [np.array([0., 0., 0., 0., 0., 0.])]
+epsilon_p  =  [np.array([0., 0., 0., 0., 0., 0.])]
+p  =  [0.]
+R  =  [0.]
+
+d_epsilon  =  np.array([0.000013, 0.000001, 0.000001, 0.000004, 0.00001, -0.000001])
+
+poisson = 0.3
+E = 210000.
+lamba_const = (E*poisson) / ((1+poisson)*(1-2*poisson))
+mu = (E) / (2*(1+poisson))
+C_ij  =  np.matrix([[lamba_const  +  2*mu, lamba_const, lamba_const, 0, 0, 0],[lamba_const, lamba_const + 2*mu, lamba_const, 0, 0, 0,],
+	[lamba_const, lamba_const, lamba_const + 2*mu, 0, 0, 0],[0, 0, 0, mu, 0, 0],
+	[0, 0, 0, 0, mu, 0], [0, 0, 0, 0, 0, mu]])
+ 
+ #BUILDING A BLOCK MATRIX i.e the JACOBIAN:
+ #J = np.bmat( [[a, b], [z, c]] )    where the dimensions of course should match...
+ 
+
+ #DEFINING HELPER FUNCTIONS: 
+ # DEVIATORIC STRESS STATE:
+def deviatoric(sigma):
+    sigma_H  =  1/3. * (sigma[0] + sigma[1] + sigma[2])
+    return np.array([sigma[0] - sigma_H, sigma[1] - sigma_H, sigma[2] - sigma_H, sigma[3], sigma[4], sigma[5]])
+	
+# VON MISES EQUIVALENT STRESS:
+def VonMises(s_dev):
+    s_eq = ((3./2)*(s_dev[0]**2 + s_dev[1]**2 + s_dev[2]**2 + 2*s_dev[3]**2 + 2*s_dev[4]**2 + 2*s_dev[5]**2))**0.5
+	#The off-diagonal terms where added twice, since they must be accounted for...
+    return s_eq
+	
+#TRIAL STRESS STATE:
+def s_trial(d_eps):
+    #s_trial  =  np.array([0, 0, 0, 0, 0, 0])
+    s_prev = np.array(sigma[-1])
+    #for i in [0,1,2,3,4,5]:
+    #	for j in [0,1,2,3,4,5]:
+    #		s_trial[i]  +=  C_ij[i][j] * d_e_i[j] 
+    s_trial = s_prev + np.array(np.dot(C_ij, d_epsilon)) #This is the same as normal matrix multiplication :) 
+    return  s_trial[0]  #THIS IS JUST STUPID STUFF TO KEEP ARRAYS...
+		
+#THE HARDENING FUNCTIONS HAVE ALREADY BEEN DEFINED UNDER 1D PLASTICITY:
+def R_func(p):
+    # if p == 0: return 0.
+    # else: return K*p**n   # POWER LAW RESULTS IN NUMERICAL PROBLEMS!!
+    return Q_R * (1 - np.exp(-C_R * p)) #VOCE
+def h_R(p):
+    # if p==0: return 0
+    # else: return n*K*p**(n-1) If power law...
+    return Q_R * C_R * np.exp(-C_R * p) #VOCE
+    
+# DEFINING THE YIELD FUNCTION! THIS AND THE BELOW EQUATIONS DIFFERS FROM EACH YIELD FUNCTION OF COURSE!!!
+def f(sigma, p):
+	s_dev  =  deviatoric(sigma)
+	return  VonMises(s_dev) - (s_0 + R_func(p))
+def yield_function(s_val,R_val):        #THE DIFFERENCE BETWEEN DIFFERENT YIELD CRITERIONS IS HERE!!
+    s_dev  =  deviatoric(s_val)
+    return  VonMises(s_dev) - (s_0 + R_val)
+ 
+#DEFINING THE DERIVATIVE OF THE YIELD FUNCTION
+def dfds(sigma):
+    dev = deviatoric(sigma)
+    s_eq = VonMises(dev)
+    dfds_i  =  (3./(2*s_eq)) * dev
+    return dfds_i
+def dfdR():
+    return -1.
+    
+def d2fds2(sigma):
+    sigma_dev = deviatoric(sigma)
+    s_eq = VonMises(sigma_dev)
+    answer =  (36*s_eq**2  -  9*(sigma_dev[0]**2  +  sigma_dev[1]**2  +  sigma_dev[2]**2  
+			+  sigma_dev[3]**2  +  sigma_dev[4]**2 + sigma_dev[5]**2)) / (8*s_eq**3) 
+    answer = (36*s_eq**2  -  9* np.linalg.norm(sigma_dev)**2) / (8*s_eq**3) #norm of dev is just \sqrt{s_i**2 + s_2**2 + s_3**2 + ...}
+    return answer   # THIS IS A SCALAR !?!?!
+    
+# THE NEXT 3 FUNCIONS ARE UNIQUE FOR THE BACKWARD EULER FULLY IMPLICIT.
+# WE CAN NOW BUILD THE JACOBIAN MATRIX:
+def Jacobian(x):
+    s_iter = x[0:6]
+    R_iter = x[6]
+    dlamba = x[7]
+    sigma_dev  =  deviatoric(s_iter)
+    s_eq = VonMises(sigma_dev)
+    dfds_new  =  dfds(s_iter)
+    d2fds2_new =  d2fds2(s_iter)
+    J_0_0 = np.eye(6,6) + C_ij * d2fds2(sigma_iter)     #QUESTION: IS d2fds2 a scalar or matrix? here i've used a scalar value, obtained by differentiating w.r.t s_ij both times, so summation is implied...
+    J_0_1  =  np.matrix([[0], [0], [0], [0], [0], [0]])	#AS A COLUMN MATRIX!!
+    J_0_2  =  np.matrix(np.dot(C_ij, dfds_new))[0].T      #COLUMN VECTOR..
+    J_1_0  =  np.matrix([0., 0., 0., 0., 0., 0.])	# ROW VECTOR
+    J_1_1  =  np.matrix([1.])
+    J_1_2  =  np.matrix([-h_R(p[-1])])
+    J_2_0  =  np.matrix(dfds_new)
+    J_2_1  =  np.matrix([-1])
+    J_2_2  =  np.matrix([0.])
+    
+    #CONCATENATION OF MATRICES, instead of assigning 64 indices its own value manually...
+    J = np.bmat([[J_0_0, J_0_1, J_0_2], [J_1_0, J_1_1, J_1_2], [J_2_0, J_2_1, J_2_2]])
+    #INVERTING THE MATRIX
+    J_inv = np.linalg.inv(J)
+    return J_inv
+    
+
+def Res(x):
+    s_iter = x[0:6]
+    R_iter = x[6]
+    dlamba = x[7]
+    dfds_i = dfds(s_iter)
+    res_stress = s_iter - s_tr + dlamba * np.array(np.dot(C_ij, dfds_i))[0]
+    res_R = R_iter - R[-1] - dlamba * h_R(p[-1] + dlamba)   # the residual is updated based on dlamba_phi
+    res_f = f(s_iter, p[-1] + dlamba)
+    res_temp = np.append(res_stress, res_R)
+    Resid = np.append(res_temp, res_f)
+    return Resid
+
+def implicit_iter(x,TOL):
+    iteration = 0
+    while np.linalg.norm(Res(x)) > TOL:
+        iteration += 1
+        if iteration <= 2:
+            J_inv = Jacobian(x)
+        dx = - np.array(np.dot(J_inv, Res(x)))[0]
+        #THE MIDPOINT RULE IS POSSIBLY OBTAINED BY ALTERING dlamba HERE!!!
+        #phi = 0.5
+        # dlamba1  =  phi * dlamba2 + (1 - phi)* dlamba1
+        # QUESTION!! : IS this definition of the new lambda increment how the mid-point rule should be defined????
+        #Is this the only different from the backward Euler method ?!??!
+        x = x + dx 
+        # x[0:7] = x[0:7] + dx[0:7] 
+        # x[7] = phi * (x[7] +dx[7]) + (1-phi)*x[7] #Heres the update of lambda!
+    return x
+# THE BACKWARD EULER IS DETERMINED BY THESE 3 FUNCTIONS ABOVE, now we are done...
+    
+    
+    
+#CUTTING PLANE WILL NOW BE IMPLEMENTED!!!:
+def cutting_plane():
+    #INITIAL STATE:
+    s_iter = s_trial(d_epsilon) #ALSO DEFINED IN THE LOOP THAT CALCULATES THE STRESS RESPONSE AT THE BOTTOM..
+    R_iter = R[-1]
+    p_iter = p[-1]
+    dlamba = 0.
+    #YEILD FUNCTION DEFINED ANEW:
+    def f_func(sigma,R):
+        s_dev  =  deviatoric(sigma)
+        return  VonMises(s_dev) - (s_0 + R_func(p))
+    while abs(f_func(s_iter, R_iter)) > 1.:
+        #PLASTIC INCREMENTS:
+        dlamba = dlamba + f(s_iter, R_iter) / (np.dot(dfds(s_iter),np.array(np.dot(C_ij, dfds(s_iter)))[0]) - dfdR()*h_R(p_iter)) 
+        #UPDATES:
+        ds = -dlamba * np.array(np.dot(C_ij, dfds(sigma_iter)))[0]
+        s_new = s_iter + ds
+        dR = dlamba * h_R(p_iter)
+        R_new = R_iter + dR
+        p_iter = p_iter + dlamba
+    return dlamba, s_new, R_new
+
+#SEMI IMPLICIT ALGORITHM WITH THE PARAMETER PHI EQUAL 0:
+    #secant method:
+def semi_implicit():
+    dlamba0 = 0.
+    sigma_0 = s_tr
+    R_0 = R[-1]
+    dlamba1 = 0.0001
+    sigma_1 = s_tr - dlamba1 * np.array(np.dot(C_ij, dfds(sigma[-1])))[0]
+    R_1 = R[-1] + h_R(p[-1]) * dlamba1
+    def yield_function(s_val,R_val):        #THE DIFFERENCE BETWEEN DIFFERENT YIELD CRITERIONS IS HERE!!
+        s_dev  =  deviatoric(s_val)
+        return  VonMises(s_dev) - (s_0 + R_val)     #this is he yield_function!
+    while abs(dlamba1 - dlamba0) > 0.0000001:   #not necessary with abs() maybe...
+        dlamba2 = dlamba1 - yield_function(sigma_1, R_1) * (dlamba1 - dlamba0) / (yield_function(sigma_1, R_1) - yield_function(sigma_0, R_0))
+        dlamba0 = dlamba1
+        dlamba1 = dlamba2 
+        sigma_0 = sigma_1
+        R_0 = R_1
+        sigma_1 = s_tr - dlamba1 * np.array(np.dot(C_ij, dfds(sigma[-1])))[0]
+        R_1 = R[-1] + h_R(p[-1]) * dlamba1
+    return dlamba1
+    
+#AN EXPLICIT CALCULATION FOR NON-VISCOPLASTICITY:
+def explicit_rate():    #ONLY USED WHEN THE YIELD FUNCTION IS VIOLATED!!!
+    #f_dot = dfds * s_dot + dfdR * R_dot 
+    H = (np.dot(dfds(sigma[-1]),np.array(np.dot(C_ij, dfds(sigma[-1])))[0])) + h_R(p[-1])
+    dlamba = (1/H) * (np.dot(dfds(sigma[-1]),np.array(np.dot(C_ij, d_epsilon))[0]))
+    return dot_lambda
+    
+    
+# NOW WE WILL DEFINE VISCOPLASTICITY!!!!
+def viscoplasticity_implicit(dt):
+    #ADDITIV:  s_eq = s_0 + R(p) + s_(p_dot)    ->  f(s,R) = s_v(p_dot)
+    # wich leads to the relation:
+    # p_dot = p_0_dot * (f(s,R) / s_V0)**(1/C) 
+    def theta_add(s,R):
+        return dot_p0 * (yield_function(s,R) / sigma_v0)**(1./C) 
+    # MULTIPLICATIV:   s_eq = (s_0 + R(p)) * (1 + (p_dot/p_0_dot))**C 
+    # which leads to the relation:
+    # p_dot = p_0_dot * ((s_eq / (s_0 + R(p)))**(1/C) - 1)
+    def theta_mult(s,R):
+        s_dev = deviatoric(s)
+        s_eq = VonMises(s_dev)
+        return dot_p0 * ((s_eq / (s_0 + R)**(1./C) - 1.) )
+    #REMEMBER THAT f(s,R) MUST BE POSITIVE BEFORE THESE ARE CALLED, ELSE WE WILL GET IMAGINARY NUMBERS!
+    # GENERALIZED MID POINT RULE ALMOST AS BEFORE, only not a yield function as restriction:
+    #s_next = s_tr - dlamba * np.array(np.dot(C_ij, dfds(s_mid, R_mid)))[0]
+    #R_next = R[-1] + dlamba * h_R(s_mid, R_mid)
+    #dlamba = dt * theta(s_next, R_next) 
+    
+    #t_n_mid = phi * tn1 + (1-phi)*t_n  #, which is where s_ø and R_ø are evaluated...
+    
+    # IF theta = 0, we have a semi-implicit solution, where the last equation only is solved iteratively:
+    # we write it on residual form:
+    def residual(dlamba,sigma_1, R_1):
+        # res = dlamba - \theta(s_n+1, R_n+1) * dt...
+        #s_next = s_tr - dlamba * np.array(np.dot(C_ij, dfds(sigma[-1], R[-1])))[0]
+        #R_next = R[-1] + dlamba * h_R(sigma[-1], R[-1])
+        #res = dlamba - dt* theta_add(s_next, R_next)
+        res = dlamba - dt* theta_mult(sigma_1, R_1)
+        #if yield_function(sigma_1, R_1) < 0:
+        #   return 0.   JUST BE CAREFUL WITH VISCOPLASTICITY!!
+        return res
+        
+    #secant method:
+    dlamba0 = 0.
+    sigma_0 = s_tr
+    R_0 = R[-1]
+    dlamba1 = 0.0001
+    s_1 = s_tr - dlamba * np.array(np.dot(C_ij, dfds(sigma[-1])))[0]
+    R_1 = R[-1] + dlamba * h_R(p[-1])
+    while (dlamba1 - dlamba0) > 0.0000001:
+        dlamba2 = dlamba1 - residual(dlamba1, sigma_1, R_1) * (dlamba1 - dlamba0) / (residual(dlamba1, sigma_1, R_1) - residual(dlamba0, sigma_0, R_0))
+        dlamba0 = dlamba1
+        dlamba1 = dlamba2
+        sigma_0 = sigma_1
+        R_0 = R_1
+        sigma_1 = s_tr - dlamba * np.array(np.dot(C_ij, dfds(sigma[-1])))[0]
+        R_1 = R[-1] + dlamba * h_R(p[-1])
+    return dlamba1
+
+"""
+The only thing that remains now is to implement the different flow rules,
+how the voids grows during the deformation in porous plasticity, and the ARAVAS radial return 
+algorithm! Possibly also a corotational formulation! RENAME epsilon_p to D_ij_p...
+
+
+
+"""
+def radial_return():
+    return
+    
+    
+    
+    
+    
+    
+
+# THE NUMERICAL PROCESS IN 3D:
+for i in range(120):
+    if i == 95: d_epsilon = -d_epsilon
+    if i == 110: d_epsilon = -d_epsilon
+    #d_epsilon = dt * D_midpoint
+    #d_epsilon  =  [0.000013, 0.000001, 0.000001, 0.000004, 0.00001, -0.000001]   #just to try something out...
+    #s_trial  =  [sigma[-1][i] + s_tr(d_epsilon)[i] for i in range(6)]
+    s_tr = s_trial(d_epsilon)
+    if f(s_tr, p[-1]) <= 0:
+        sigma.append(s_tr)
+        epsilon_p.append(epsilon_p[-1]) 
+        epsilon.append(epsilon[-1] + d_epsilon)
+        p.append(p[-1])
+        R.append(R[-1])
+    else:
+        #THE UNKNOWNS ARE:
+        #x = np.array([s_11, s_22, s_33, s_12, s_23, s_31, R, dlamba])   # 8 unknowns
+        s_iter = s_trial(d_epsilon) # AS INITIAL INCREMEMNT
+        x = np.append(s_iter,R[-1])
+        dlamba = 0.
+        x = np.append(x, dlamba)
+        # THE JACOBIAN, RESIDUAL AND IMPLICIT ALGORITHM ARE ALL USED IN THE NEXT LINE:
+        x_new =  implicit_iter(x, 1.)  #10 gives f()=10, 100 gives f()=21, 1 gives f()=0.00001 but VERY SLOW!
+        #These updates are retrieved:
+        sigma_new = x_new[0:6]
+        R_new = x_new[6]
+        dlamba = x_new[7]
+        """
+        Eventually using the semi-implicit algorithm to obtain:
+        dlamba = semi_implicit()
+        sigma_new = s_tr - dlamba1 * np.array(np.dot(C_ij, dfds(sigma[-1])))[0]
+        R_new = R[-1] + h_R(p[-1]) * dlamba1
+        R.append(R_new)
+        
+        
+        OR THE CUTTING PLANE ALGORITHM; all updates included:
+        dlamba, s_new, R_new = cutting_plane()
+        sigma.append(sigma_new)
+        R.append(R_new)
+        sigma_dev  =  deviatoric(sigma_new)
+        s_eq  =  VonMises(sigma_dev)
+        epsilon_p.append(epsilon_p[-1] + dlamba * (3./(2*s_eq)) * sigma_dev)        
+        epsilon.append(epsilon[-1] + d_epsilon)
+        p.append(p[-1] + dlamba)
+
+        OR VISCOPLASTICITY:
+        dlamba = viscoplasticity_implicit(dt)
+        sigma_new = s_tr - dlamba * np.array(np.dot(C_ij, dfds(sigma[-1])))[0]
+        R_new = R[-1] + h_R(p[-1]) * dlamba
+        R.append(R_new)
+        """
+        # EVERYTHING ABOVE IS UNIQUE FOR THE GENERALIZED MID-POINT RULE, except the green comments,
+        #While everything below are the same for all updates, but unique for each flow rule. Here, J2 flow.
+        # AND ALL UPDATES ARE STORED:
+        sigma.append(sigma_new)
+        sigma_dev  =  deviatoric(sigma_new)
+        s_eq  =  VonMises(sigma_dev)
+        #epsilon_p.append([epsilon_p[-1][i] + dlamba * (3./(2*s_eq)) * sigma_dev[i] for i in [0,1,2,3,4,5]])  if we kept to the list format...
+        epsilon_p.append(epsilon_p[-1] + dlamba * (3./(2*s_eq)) * sigma_dev)        
+        #epsilon.append([epsilon[-1][i] + d_epsilon[i] for i in [0,1,2,3,4,5]])
+        epsilon.append(epsilon[-1] + d_epsilon)
+        p.append(p[-1] + dlamba)				#For associated plasticity only!!!
+        R.append(R[-1] + h_R(p[-1] + dlamba) * dlamba) # I think i should use h_R(p[-1] + dlamba) as I did here, at least i did in the residual function...
+plt.plot([sigma[i][0] for i in range(len(sigma))])
